@@ -1,0 +1,15 @@
+# Virtual Environment
+venv/
+env/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Secrets
+.env
+
+# Model/Weights and Caches (if any)
+*.pkl
+*.dat
