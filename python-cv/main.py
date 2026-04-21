@@ -26,9 +26,13 @@ import gc
 
 import urllib.request
 from pymongo import MongoClient
-from deepface import DeepFace
+from insightface.app import FaceAnalysis
 
 logger = logging.getLogger("main")
+
+# Initialize InsightFace (buffalo_sc is lightweight ~15MB)
+face_app = FaceAnalysis(name='buffalo_sc', providers=['CPUExecutionProvider'])
+face_app.prepare(ctx_id=-1, det_size=(640, 640))
 logging.basicConfig(level=logging.INFO)
 
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/attendance_db")
@@ -76,25 +80,28 @@ def load_faces():
             if image is None:
                 continue
                 
-            # Image Resizing (25%)
-            small_image = cv2.resize(image, (0, 0), fx=0.25, fy=0.25)
-            rgb_image = cv2.cvtColor(small_image, cv2.COLOR_BGR2RGB)
+            # Image Resizing (50%)
+            small_image = cv2.resize(image, (0, 0), fx=0.5, fy=0.5)
             
             try:
-                results = DeepFace.represent(img_path=rgb_image, model_name="SFace", detector_backend="mediapipe", enforce_detection=False)
-                if results and len(results) > 0:
-                    embedding = results[0]["embedding"]
+                faces = face_app.get(small_image)
+                if faces and len(faces) > 0:
+                    primary_face = max(faces, key=lambda f: (f.bbox[2]-f.bbox[0])*(f.bbox[3]-f.bbox[1]))
+                    embedding = primary_face.normed_embedding
+                    
                     # Ensure they are appended tightly
                     known_face_encodings.append(embedding)
                     known_face_names.append(student_name)
                     known_face_ids.append(student_id)
             except Exception as e:
-                logger.error(f"DeepFace encoding failed for {student_name}: {e}")
+                logger.error(f"InsightFace encoding failed for {student_name}: {e}")
                 
             # Free RAM explicitly per student
-            del image_data, image, small_image, rgb_image
-            if 'results' in locals():
-                del results
+            del image_data, image, small_image
+            if 'faces' in locals():
+                del faces
+            if 'primary_face' in locals():
+                del primary_face
             
         except Exception as e:
             logger.error(f"Failed to load image for {student_name}: {e}")
@@ -210,26 +217,25 @@ async def recognize(req: RecognizeRequest):
             error="Liveness check failed — possible spoofing attempt",
         )
 
-    # Face recognition: scale frame to 25% (0.25)
-    small_frame = cv2.resize(img_bgr, (0, 0), fx=0.25, fy=0.25)
-    rgb_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+    # Face recognition: scale frame to 50% (0.5)
+    small_frame = cv2.resize(img_bgr, (0, 0), fx=0.5, fy=0.5)
     
-    # Process face with DeepFace
+    # Process face with InsightFace (expects BGR)
     try:
-        results = DeepFace.represent(img_path=rgb_frame, model_name="SFace", detector_backend="mediapipe", enforce_detection=True)
+        faces = face_app.get(small_frame)
     except Exception as e:
         # No face detected or processing error
-        del arr, img_bgr, small_frame, rgb_frame
+        del arr, img_bgr, small_frame
         gc.collect()
         return RecognizeResponse(
             matched=False,
             live=True,
             liveness_reason=liveness_result["reason"],
-            error="No face detected or processing error"
+            error="Processing error"
         )
     
-    if not results or len(results) == 0:
-        del arr, img_bgr, small_frame, rgb_frame, results
+    if not faces or len(faces) == 0:
+        del arr, img_bgr, small_frame, faces
         gc.collect()
         return RecognizeResponse(
             matched=False,
@@ -239,31 +245,28 @@ async def recognize(req: RecognizeRequest):
         )
         
     # Process only the primary face to save CPU/RAM
-    if len(results) > 1:
-        # Sort by bounding box area (w * h)
-        results = sorted(results, key=lambda r: r["facial_area"]["w"] * r["facial_area"]["h"], reverse=True)
-        
-    face_encoding_to_check = np.array(results[0]["embedding"])
+    primary_face = max(faces, key=lambda f: (f.bbox[2]-f.bbox[0])*(f.bbox[3]-f.bbox[1]))
+    face_encoding_to_check = primary_face.normed_embedding
     
     matched = False
     best_match_index = -1
     confidence = 0.0
     
     if len(known_face_encodings) > 0:
-        # Calculate Euclidean distances
+        # Calculate Cosine Similarities
         known_encodings_array = np.array(known_face_encodings)
-        face_distances = np.linalg.norm(known_encodings_array - face_encoding_to_check, axis=1)
-        best_match_index = np.argmin(face_distances)
+        similarities = np.dot(known_encodings_array, face_encoding_to_check)
+        best_match_index = np.argmax(similarities)
         
-        # SFace Sweet spot threshold (<= 0.60)
-        if face_distances[best_match_index] <= 0.60:
+        # InsightFace cosine similarity threshold (>= 0.60)
+        if similarities[best_match_index] >= 0.60:
             matched = True
-            confidence = max(0.0, 1.0 - face_distances[best_match_index])
+            confidence = float(similarities[best_match_index])
             
-        del known_encodings_array, face_distances
+        del known_encodings_array, similarities
 
     # Cleanup memory
-    del arr, img_bgr, small_frame, rgb_frame, results, face_encoding_to_check
+    del arr, img_bgr, small_frame, faces, primary_face, face_encoding_to_check
     gc.collect()
             
     if matched:
