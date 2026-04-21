@@ -44,9 +44,10 @@ exports.registerStudent = async (req, res) => {
     // Notify Python CV service to refresh encoding cache
     try {
       await axios.post(`${process.env.PYTHON_CV_URL}/refresh`);
-    } catch {
-      // Non-fatal if CV service offline
+    } catch (err) {
+      console.log("Python service didn't wake up in time, but student is registered!");
     }
+
 
     const token = signToken(student._id, "student");
     res.status(201).json({ token, user: student, role: "student" });
