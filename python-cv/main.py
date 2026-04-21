@@ -18,17 +18,74 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-import face_engine
 import liveness as lv
 import cv2
 import base64
 import numpy as np
 
+import urllib.request
+import face_recognition
+from pymongo import MongoClient
+
 logger = logging.getLogger("main")
 logging.basicConfig(level=logging.INFO)
 
-NODE_SERVER_URL = os.getenv("NODE_SERVER_URL", "http://localhost:5000")
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/attendance_db")
 
+# Global Lists Management
+known_face_encodings = []
+known_face_names = []
+known_face_ids = []
+
+client = MongoClient(MONGO_URI)
+try:
+    db = client.get_default_database()
+except:
+    db = client["attendance_db"]
+
+
+def load_faces():
+    global known_face_encodings, known_face_names, known_face_ids
+    
+    # Refresh Logic: ensure lists are cleared once at the start
+    known_face_encodings.clear()
+    known_face_names.clear()
+    known_face_ids.clear()
+    
+    logger.info("Loading student faces from MongoDB...")
+    
+    students = db.students.find({})
+    
+    for student in students:
+        student_id = str(student.get("_id"))
+        student_name = student.get("name", "Unknown")
+        image_url = student.get("faceImageUrl")
+        
+        if not image_url:
+            continue
+            
+        # Error Handling: Add try-except block inside loading loop
+        try:
+            req = urllib.request.Request(image_url, headers={'User-Agent': 'Mozilla/5.0'})
+            resp = urllib.request.urlopen(req)
+            image_data = np.asarray(bytearray(resp.read()), dtype="uint8")
+            image = cv2.imdecode(image_data, cv2.IMREAD_COLOR)
+            
+            if image is None:
+                continue
+                
+            rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            encodings = face_recognition.face_encodings(rgb_image)
+            
+            if encodings:
+                # Ensure they are appended to, not reset, inside the loop
+                known_face_encodings.append(encodings[0])
+                known_face_names.append(student_name)
+                known_face_ids.append(student_id)
+        except Exception as e:
+            logger.error(f"Failed to load image for {student_name}: {e}")
+            
+    logger.info(f"Loaded {len(known_face_encodings)} student faces successfully.")
 
 # ---------------------------------------------------------------------------
 # Lifespan: build encoding cache on startup
@@ -36,8 +93,8 @@ NODE_SERVER_URL = os.getenv("NODE_SERVER_URL", "http://localhost:5000")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info(f"🔗 Connecting to Node.js backend at: {NODE_SERVER_URL}")
-    face_engine.start(NODE_SERVER_URL)
+    logger.info("🔗 Loading faces from MongoDB on startup")
+    load_faces()
     yield
     logger.info("🛑 CV service shutting down.")
 
@@ -90,7 +147,7 @@ async def health():
 @app.post("/refresh")
 async def refresh_cache():
     """Force reload of face encoding cache."""
-    face_engine.force_refresh(NODE_SERVER_URL)
+    load_faces()
     return {"status": "cache refreshed"}
 
 
@@ -127,17 +184,49 @@ async def recognize(req: RecognizeRequest):
         )
 
     # Face recognition
-    result = face_engine.recognize_face(req.image)
-
-    return RecognizeResponse(
-        matched=result.get("matched", False),
-        studentId=result.get("studentId"),
-        studentName=result.get("studentName"),
-        confidence=result.get("confidence"),
-        live=True,
-        liveness_reason=liveness_result["reason"],
-        error=result.get("error"),
-    )
+    rgb_frame = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+    face_locations = face_recognition.face_locations(rgb_frame)
+    if not face_locations:
+        return RecognizeResponse(
+            matched=False,
+            live=True,
+            liveness_reason=liveness_result["reason"],
+            error="No face detected"
+        )
+        
+    face_encodings_in_frame = face_recognition.face_encodings(rgb_frame, face_locations)
+    
+    matched = False
+    best_match_index = -1
+    confidence = 0.0
+    
+    if len(known_face_encodings) > 0 and len(face_encodings_in_frame) > 0:
+        face_encoding_to_check = face_encodings_in_frame[0]
+        
+        # Best Match Selection: use np.argmin(face_distances)
+        face_distances = face_recognition.face_distance(known_face_encodings, face_encoding_to_check)
+        best_match_index = np.argmin(face_distances)
+        
+        if face_distances[best_match_index] < 0.6:
+            matched = True
+            confidence = 1.0 - face_distances[best_match_index]
+            
+    if matched:
+        return RecognizeResponse(
+            matched=True,
+            studentId=known_face_ids[best_match_index],
+            studentName=known_face_names[best_match_index],
+            confidence=confidence,
+            live=True,
+            liveness_reason=liveness_result["reason"]
+        )
+    else:
+        return RecognizeResponse(
+            matched=False,
+            live=True,
+            liveness_reason=liveness_result["reason"],
+            error="Face not recognized or no confident match"
+        )
 
 
 # ---------------------------------------------------------------------------

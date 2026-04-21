@@ -17,8 +17,8 @@ numpy
 # ── Image handling ────────────────────────────────────────────────────────────
 Pillow
 
-# ── NOTE: If you need face_recognition (uses dlib), add these lines:
-# face-recognition
-# dlib
-# And change Render Build Command to:
-#   apt-get install -y cmake libopenblas-dev liblapack-dev && pip install -r requirements.txt
+# ── Face Recognition and DB ──────────────────────────────────────────────────
+face-recognition
+dlib
+pymongo
+
