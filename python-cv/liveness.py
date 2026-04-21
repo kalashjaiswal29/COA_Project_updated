@@ -32,7 +32,7 @@ def compute_texture_variance(image_bgr: np.ndarray, face_rect) -> float:
 
 
 def is_live(image_bgr: np.ndarray, face_rect=None,
-            sharpness_threshold: float = 40.0,
+            sharpness_threshold: float = 30.0,
             texture_threshold: float = 15.0) -> dict:
     """
     Run basic liveness checks and return a result dict.

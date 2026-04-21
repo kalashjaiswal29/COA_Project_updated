@@ -125,3 +125,32 @@ exports.listAllStudents = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+// ─── CV CACHE SYNC (proxy to Python service) ──────────────────────────────────
+// POST /api/admin/cv-sync — protected by requireAdmin
+// Tells the Python CV microservice to re-fetch the student list from MongoDB.
+exports.cvSync = async (req, res) => {
+  try {
+    const axios = require("axios");
+    const cvUrl = process.env.PYTHON_CV_URL || "http://localhost:8000";
+    await axios.post(`${cvUrl}/refresh`, {}, { timeout: 15000 });
+    res.json({ message: "CV cache refreshed successfully ✅" });
+  } catch (err) {
+    const detail = err?.response?.data || err.message;
+    res.status(502).json({ message: "Could not reach CV service", detail });
+  }
+};
+
+// ─── ALL STUDENTS DIRECTORY (for Admin Directory page) ────────────────────────
+// GET /api/admin/all-students — protected by requireAdmin JWT middleware
+exports.getAllStudents = async (req, res) => {
+  try {
+    const students = await Student.find(
+      {},
+      "name entryNumber email department year faceImageUrl createdAt"
+    ).sort({ createdAt: -1 });
+    res.json(students);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};

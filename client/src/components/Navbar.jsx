@@ -31,6 +31,7 @@ export default function Navbar() {
   const adminLinks = [
     { to: "/admin", label: "Dashboard" },
     { to: "/admin/create-class", label: "New Class" },
+    { to: "/admin/directory", label: "Directory" },
   ];
   const studentLinks = [
     { to: "/student", label: "Dashboard" },
@@ -52,17 +53,22 @@ export default function Navbar() {
 
         {/* Desktop links */}
         <div style={{ display: "flex", gap: "0.25rem", alignItems: "center" }} className="nav-links">
-          {links.map((l) => (
-            <Link key={l.to} to={l.to} style={{
-              padding: "0.45rem 1rem",
-              borderRadius: 8,
-              fontSize: "0.9rem",
-              fontWeight: 500,
-              color: location.pathname === l.to ? "#f97316" : "#94a3b8",
-              background: location.pathname === l.to ? "rgba(249,115,22,0.1)" : "transparent",
-              transition: "all 0.2s",
-            }}>{l.label}</Link>
-          ))}
+          {links.map((l) => {
+            const isActive = l.to === "/admin" || l.to === "/student"
+              ? location.pathname === l.to
+              : location.pathname.startsWith(l.to);
+            return (
+              <Link key={l.to} to={l.to} style={{
+                padding: "0.45rem 1rem",
+                borderRadius: 8,
+                fontSize: "0.9rem",
+                fontWeight: 500,
+                color: isActive ? "#f97316" : "#94a3b8",
+                background: isActive ? "rgba(249,115,22,0.1)" : "transparent",
+                transition: "all 0.2s",
+              }}>{l.label}</Link>
+            );
+          })}
         </div>
 
         {/* User info + logout */}

@@ -17,6 +17,7 @@ import StudentAttendance from "./pages/student/StudentAttendance";
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import CreateClass from "./pages/admin/CreateClass";
 import AttendanceReport from "./pages/admin/AttendanceReport";
+import AdminDirectory from "./pages/admin/AdminDirectory";
 
 // Shared
 import AttendanceScan from "./pages/AttendanceScan";
@@ -49,6 +50,7 @@ function AppRouter() {
               <Route path="/admin/create-class" element={<ProtectedRoute role="admin"><CreateClass /></ProtectedRoute>} />
               <Route path="/admin/attendance/:classId" element={<ProtectedRoute role="admin"><AttendanceReport /></ProtectedRoute>} />
               <Route path="/admin/scan/:classId" element={<ProtectedRoute role="admin"><AttendanceScan /></ProtectedRoute>} />
+              <Route path="/admin/directory" element={<ProtectedRoute role="admin"><AdminDirectory /></ProtectedRoute>} />
               <Route path="*" element={<Navigate to="/admin" replace />} />
             </Routes>
           </div>

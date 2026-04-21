@@ -8,10 +8,11 @@ const {
   getAttendanceByClass,
   getAttendanceSummary,
   listAllStudents,
+  getAllStudents,
+  cvSync,
 } = require("../controllers/adminController");
 
-// Internal — called by Python CV service (no JWT, network-internal only)
-router.get("/students/list", listAllStudents);
+// Internal route moved to server.js
 
 // All routes below require admin JWT
 router.use(protect, requireAdmin);
@@ -22,5 +23,11 @@ router.delete("/classes/:id", deleteClass);
 
 router.get("/attendance/:classId", getAttendanceByClass);
 router.get("/attendance/:classId/summary", getAttendanceSummary);
+
+// Admin Student Directory — returns all enrolled students
+router.get("/all-students", getAllStudents);
+
+// CV Cache Sync — proxies refresh request to Python CV service
+router.post("/cv-sync", cvSync);
 
 module.exports = router;

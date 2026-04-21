@@ -2,6 +2,15 @@ const jwt = require("jsonwebtoken");
 const Student = require("../models/Student");
 const Admin = require("../models/Admin");
 
+const requireInternal = (req, res, next) => {
+  const token = req.headers["x-internal-token"];
+  const expectedToken = process.env.INTERNAL_API_KEY || "internal_secret_token";
+  if (!token || token !== expectedToken) {
+    return res.status(403).json({ message: "Forbidden: Invalid internal token" });
+  }
+  next();
+};
+
 const protect = async (req, res, next) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -33,4 +42,4 @@ const requireStudent = (req, res, next) => {
   next();
 };
 
-module.exports = { protect, requireAdmin, requireStudent };
+module.exports = { protect, requireAdmin, requireStudent, requireInternal };

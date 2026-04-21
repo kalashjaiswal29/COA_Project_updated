@@ -42,7 +42,10 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/student", studentRoutes);
 
 // Internal: Python CV service calls this to fetch student list
-// Proxied through adminRoutes: GET /api/students/list (no auth)
+// Authenticated via internal API key
+const { requireInternal } = require("./middleware/authMiddleware");
+const { listAllStudents } = require("./controllers/adminController");
+app.get("/api/students/list", requireInternal, listAllStudents);
 
 app.get("/", (_, res) => res.json({ message: "Attendance API is running ✅" }));
 
