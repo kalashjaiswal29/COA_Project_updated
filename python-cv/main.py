@@ -78,6 +78,9 @@ class RecognizeResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+@app.get("/")
+async def root():
+    return {"status": "Online", "message": "AttendAI Python CV Service is running ✅"}
 
 @app.get("/health")
 async def health():
