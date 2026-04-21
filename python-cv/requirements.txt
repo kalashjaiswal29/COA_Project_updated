@@ -18,7 +18,8 @@ numpy
 Pillow
 
 # ── Face Recognition and DB ──────────────────────────────────────────────────
-face-recognition
-dlib
+deepface
+mediapipe
+tf-keras
 pymongo
 

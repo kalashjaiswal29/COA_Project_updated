@@ -25,8 +25,8 @@ import numpy as np
 import gc
 
 import urllib.request
-import face_recognition
 from pymongo import MongoClient
+from deepface import DeepFace
 
 logger = logging.getLogger("main")
 logging.basicConfig(level=logging.INFO)
@@ -37,6 +37,7 @@ MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/attendance_db")
 known_face_encodings = []
 known_face_names = []
 known_face_ids = []
+frame_counter = 0
 
 client = MongoClient(MONGO_URI)
 try:
@@ -79,16 +80,21 @@ def load_faces():
             small_image = cv2.resize(image, (0, 0), fx=0.25, fy=0.25)
             rgb_image = cv2.cvtColor(small_image, cv2.COLOR_BGR2RGB)
             
-            encodings = face_recognition.face_encodings(rgb_image)
-            
-            if encodings:
-                # Ensure they are appended to, not reset, inside the loop
-                known_face_encodings.append(encodings[0])
-                known_face_names.append(student_name)
-                known_face_ids.append(student_id)
+            try:
+                results = DeepFace.represent(img_path=rgb_image, model_name="SFace", detector_backend="mediapipe", enforce_detection=False)
+                if results and len(results) > 0:
+                    embedding = results[0]["embedding"]
+                    # Ensure they are appended tightly
+                    known_face_encodings.append(embedding)
+                    known_face_names.append(student_name)
+                    known_face_ids.append(student_id)
+            except Exception as e:
+                logger.error(f"DeepFace encoding failed for {student_name}: {e}")
                 
             # Free RAM explicitly per student
-            del image_data, image, small_image, rgb_image, encodings
+            del image_data, image, small_image, rgb_image
+            if 'results' in locals():
+                del results
             
         except Exception as e:
             logger.error(f"Failed to load image for {student_name}: {e}")
@@ -164,11 +170,23 @@ async def refresh_cache():
 async def recognize(req: RecognizeRequest):
     """
     Accept a base64 image frame.
-    1. Decode
-    2. Run liveness check
-    3. Run face recognition
-    4. Return result
+    1. Check frame skip logic
+    2. Decode
+    3. Run liveness check
+    4. Run face recognition
+    5. Return result
     """
+    global frame_counter
+    frame_counter += 1
+    
+    # Skip Frame Logic: only process every 3rd frame
+    if frame_counter % 3 != 0:
+        return RecognizeResponse(
+            matched=False,
+            live=True,
+            error="Frame skipped for CPU optimization"
+        )
+        
     # Decode to OpenCV for liveness
     try:
         b64 = req.image
@@ -196,9 +214,23 @@ async def recognize(req: RecognizeRequest):
     small_frame = cv2.resize(img_bgr, (0, 0), fx=0.25, fy=0.25)
     rgb_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
     
-    # Speed Fix: Use 'hog' model
-    face_locations = face_recognition.face_locations(rgb_frame, model="hog")
-    if not face_locations:
+    # Process face with DeepFace
+    try:
+        results = DeepFace.represent(img_path=rgb_frame, model_name="SFace", detector_backend="mediapipe", enforce_detection=True)
+    except Exception as e:
+        # No face detected or processing error
+        del arr, img_bgr, small_frame, rgb_frame
+        gc.collect()
+        return RecognizeResponse(
+            matched=False,
+            live=True,
+            liveness_reason=liveness_result["reason"],
+            error="No face detected or processing error"
+        )
+    
+    if not results or len(results) == 0:
+        del arr, img_bgr, small_frame, rgb_frame, results
+        gc.collect()
         return RecognizeResponse(
             matched=False,
             live=True,
@@ -207,27 +239,32 @@ async def recognize(req: RecognizeRequest):
         )
         
     # Process only the primary face to save CPU/RAM
-    if len(face_locations) > 1:
-        # Calculate area for each (top, right, bottom, left)
-        face_locations = [max(face_locations, key=lambda f: (f[2] - f[0]) * (f[1] - f[3]))]
+    if len(results) > 1:
+        # Sort by bounding box area (w * h)
+        results = sorted(results, key=lambda r: r["facial_area"]["w"] * r["facial_area"]["h"], reverse=True)
         
-    face_encodings_in_frame = face_recognition.face_encodings(rgb_frame, face_locations)
+    face_encoding_to_check = np.array(results[0]["embedding"])
     
     matched = False
     best_match_index = -1
     confidence = 0.0
     
-    if len(known_face_encodings) > 0 and len(face_encodings_in_frame) > 0:
-        face_encoding_to_check = face_encodings_in_frame[0]
-        
-        # Best Match Selection: use np.argmin(face_distances)
-        face_distances = face_recognition.face_distance(known_face_encodings, face_encoding_to_check)
+    if len(known_face_encodings) > 0:
+        # Calculate Euclidean distances
+        known_encodings_array = np.array(known_face_encodings)
+        face_distances = np.linalg.norm(known_encodings_array - face_encoding_to_check, axis=1)
         best_match_index = np.argmin(face_distances)
         
-        # Sweet spot threshold
-        if face_distances[best_match_index] < 0.55:
+        # SFace Sweet spot threshold (<= 0.60)
+        if face_distances[best_match_index] <= 0.60:
             matched = True
-            confidence = 1.0 - face_distances[best_match_index]
+            confidence = max(0.0, 1.0 - face_distances[best_match_index])
+            
+        del known_encodings_array, face_distances
+
+    # Cleanup memory
+    del arr, img_bgr, small_frame, rgb_frame, results, face_encoding_to_check
+    gc.collect()
             
     if matched:
         return RecognizeResponse(
