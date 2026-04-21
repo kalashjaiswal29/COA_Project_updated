@@ -35,7 +35,10 @@ face_app = FaceAnalysis(name='buffalo_sc', providers=['CPUExecutionProvider'])
 face_app.prepare(ctx_id=-1, det_size=(640, 640))
 logging.basicConfig(level=logging.INFO)
 
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/attendance_db")
+MONGO_URI = os.getenv("MONGO_URI")
+if not MONGO_URI:
+    logger.warning("MONGO_URI is missing, falling back to localhost.")
+    MONGO_URI = "mongodb://localhost:27017/attendance_db"
 
 # Global Lists Management
 known_face_encodings = []
@@ -43,7 +46,8 @@ known_face_names = []
 known_face_ids = []
 frame_counter = 0
 
-client = MongoClient(MONGO_URI)
+# Added serverSelectionTimeoutMS so it fails fast rather than hanging on startup
+client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
 try:
     db = client.get_default_database()
 except:
@@ -116,7 +120,10 @@ def load_faces():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("🔗 Loading faces from MongoDB on startup")
-    load_faces()
+    try:
+        load_faces()
+    except Exception as e:
+        logger.error(f"Startup error: Could not load faces. DB might be unreachable: {e}")
     yield
     logger.info("🛑 CV service shutting down.")
 
@@ -293,13 +300,10 @@ async def recognize(req: RecognizeRequest):
 if __name__ == "__main__":
     import uvicorn
 
-    # Render sets PORT dynamically. We MUST bind to 0.0.0.0 (not 127.0.0.1)
-    # otherwise Render's load balancer cannot reach the service.
-    port = int(os.getenv("PORT", 8000))
-    logger.info(f"🚀 Starting CV service on 0.0.0.0:{port}")
+    logger.info("🚀 Starting CV service on 0.0.0.0:10000")
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=port,
+        port=10000,
         log_level="info",
     )
