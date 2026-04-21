@@ -27,7 +27,12 @@ export const useSocket = () => {
     socketRef.current?.emit("leave_scan", { classId });
   }, []);
 
+  const lastEmitRef = useRef(0);
+
   const sendFrame = useCallback((classId, image, date) => {
+    const now = Date.now();
+    if (now - lastEmitRef.current < 1000) return;
+    lastEmitRef.current = now;
     socketRef.current?.emit("frame", { classId, image, date });
   }, []);
 

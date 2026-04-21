@@ -116,25 +116,21 @@ def load_faces():
     logger.info(f"Loaded {len(known_face_encodings)} student faces successfully.")
 
 # ---------------------------------------------------------------------------
-# Lifespan: build encoding cache on startup
+# Startup logic
 # ---------------------------------------------------------------------------
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+app = FastAPI(
+    title="Attendance CV Microservice",
+    version="1.0.0",
+)
+
+@app.on_event("startup")
+async def startup_event():
     logger.info("🔗 Loading faces from MongoDB on startup")
     try:
         load_faces()
     except Exception as e:
         logger.error(f"Startup error: Could not load faces. DB might be unreachable: {e}")
-    yield
-    logger.info("🛑 CV service shutting down.")
-
-
-app = FastAPI(
-    title="Attendance CV Microservice",
-    version="1.0.0",
-    lifespan=lifespan,
-)
 
 app.add_middleware(
     CORSMiddleware,
@@ -276,8 +272,8 @@ async def recognize(req: RecognizeRequest):
         # Debug logging
         logger.info(f"🔍 Best match score: {best_score:.4f} for {known_face_names[best_match_index]}")
         
-        # InsightFace cosine similarity threshold (temporarily lowered to >= 0.50)
-        if best_score >= 0.50:
+        # InsightFace cosine similarity threshold (lenient threshold for demo)
+        if best_score >= 0.55:
             matched = True
             confidence = best_score
             
