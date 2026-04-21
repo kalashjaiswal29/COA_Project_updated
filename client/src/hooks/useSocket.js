@@ -1,14 +1,16 @@
 import { useEffect, useRef, useCallback } from "react";
 import { io } from "socket.io-client";
 
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
+const apiUrl = import.meta.env.VITE_API_URL || "";
+const SOCKET_URL = apiUrl ? apiUrl.replace("/api", "") : "http://localhost:5000";
 
 export const useSocket = () => {
   const socketRef = useRef(null);
 
   useEffect(() => {
     socketRef.current = io(SOCKET_URL, {
-      transports: ["websocket"],
+      transports: ["polling", "websocket"],
+      withCredentials: true,
       autoConnect: true,
     });
 
