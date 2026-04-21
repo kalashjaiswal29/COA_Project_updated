@@ -22,6 +22,7 @@ import liveness as lv
 import cv2
 import base64
 import numpy as np
+import gc
 
 import urllib.request
 import face_recognition
@@ -74,7 +75,10 @@ def load_faces():
             if image is None:
                 continue
                 
-            rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            # Image Resizing (25%)
+            small_image = cv2.resize(image, (0, 0), fx=0.25, fy=0.25)
+            rgb_image = cv2.cvtColor(small_image, cv2.COLOR_BGR2RGB)
+            
             encodings = face_recognition.face_encodings(rgb_image)
             
             if encodings:
@@ -82,9 +86,14 @@ def load_faces():
                 known_face_encodings.append(encodings[0])
                 known_face_names.append(student_name)
                 known_face_ids.append(student_id)
+                
+            # Free RAM explicitly per student
+            del image_data, image, small_image, rgb_image, encodings
+            
         except Exception as e:
             logger.error(f"Failed to load image for {student_name}: {e}")
             
+    gc.collect()
     logger.info(f"Loaded {len(known_face_encodings)} student faces successfully.")
 
 # ---------------------------------------------------------------------------
@@ -183,9 +192,12 @@ async def recognize(req: RecognizeRequest):
             error="Liveness check failed — possible spoofing attempt",
         )
 
-    # Face recognition
-    rgb_frame = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-    face_locations = face_recognition.face_locations(rgb_frame)
+    # Face recognition: scale frame to 25% (0.25)
+    small_frame = cv2.resize(img_bgr, (0, 0), fx=0.25, fy=0.25)
+    rgb_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+    
+    # Speed Fix: Use 'hog' model
+    face_locations = face_recognition.face_locations(rgb_frame, model="hog")
     if not face_locations:
         return RecognizeResponse(
             matched=False,
@@ -193,6 +205,11 @@ async def recognize(req: RecognizeRequest):
             liveness_reason=liveness_result["reason"],
             error="No face detected"
         )
+        
+    # Process only the primary face to save CPU/RAM
+    if len(face_locations) > 1:
+        # Calculate area for each (top, right, bottom, left)
+        face_locations = [max(face_locations, key=lambda f: (f[2] - f[0]) * (f[1] - f[3]))]
         
     face_encodings_in_frame = face_recognition.face_encodings(rgb_frame, face_locations)
     
@@ -207,7 +224,8 @@ async def recognize(req: RecognizeRequest):
         face_distances = face_recognition.face_distance(known_face_encodings, face_encoding_to_check)
         best_match_index = np.argmin(face_distances)
         
-        if face_distances[best_match_index] < 0.6:
+        # Sweet spot threshold
+        if face_distances[best_match_index] < 0.55:
             matched = True
             confidence = 1.0 - face_distances[best_match_index]
             
