@@ -86,9 +86,11 @@ def load_faces():
                 
             # Image Resizing (50%)
             small_image = cv2.resize(image, (0, 0), fx=0.5, fy=0.5)
+            # Convert BGR to RGB as requested for color check
+            rgb_image = cv2.cvtColor(small_image, cv2.COLOR_BGR2RGB)
             
             try:
-                faces = face_app.get(small_image)
+                faces = face_app.get(rgb_image)
                 if faces and len(faces) > 0:
                     primary_face = max(faces, key=lambda f: (f.bbox[2]-f.bbox[0])*(f.bbox[3]-f.bbox[1]))
                     embedding = primary_face.normed_embedding
@@ -101,7 +103,7 @@ def load_faces():
                 logger.error(f"InsightFace encoding failed for {student_name}: {e}")
                 
             # Free RAM explicitly per student
-            del image_data, image, small_image
+            del image_data, image, small_image, rgb_image
             if 'faces' in locals():
                 del faces
             if 'primary_face' in locals():
@@ -226,13 +228,18 @@ async def recognize(req: RecognizeRequest):
 
     # Face recognition: scale frame to 50% (0.5)
     small_frame = cv2.resize(img_bgr, (0, 0), fx=0.5, fy=0.5)
+    # Convert BGR to RGB as requested for color check
+    rgb_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
     
-    # Process face with InsightFace (expects BGR)
+    # Save debug frame (save as BGR so it looks normal in standard image viewers)
+    cv2.imwrite("debug_frame.jpg", cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2BGR))
+    
+    # Process face with InsightFace
     try:
-        faces = face_app.get(small_frame)
+        faces = face_app.get(rgb_frame)
     except Exception as e:
         # No face detected or processing error
-        del arr, img_bgr, small_frame
+        del arr, img_bgr, small_frame, rgb_frame
         gc.collect()
         return RecognizeResponse(
             matched=False,
@@ -242,7 +249,7 @@ async def recognize(req: RecognizeRequest):
         )
     
     if not faces or len(faces) == 0:
-        del arr, img_bgr, small_frame, faces
+        del arr, img_bgr, small_frame, rgb_frame, faces
         gc.collect()
         return RecognizeResponse(
             matched=False,
@@ -264,16 +271,20 @@ async def recognize(req: RecognizeRequest):
         known_encodings_array = np.array(known_face_encodings)
         similarities = np.dot(known_encodings_array, face_encoding_to_check)
         best_match_index = np.argmax(similarities)
+        best_score = float(similarities[best_match_index])
         
-        # InsightFace cosine similarity threshold (>= 0.60)
-        if similarities[best_match_index] >= 0.60:
+        # Debug logging
+        logger.info(f"🔍 Best match score: {best_score:.4f} for {known_face_names[best_match_index]}")
+        
+        # InsightFace cosine similarity threshold (temporarily lowered to >= 0.50)
+        if best_score >= 0.50:
             matched = True
-            confidence = float(similarities[best_match_index])
+            confidence = best_score
             
         del known_encodings_array, similarities
 
     # Cleanup memory
-    del arr, img_bgr, small_frame, faces, primary_face, face_encoding_to_check
+    del arr, img_bgr, small_frame, rgb_frame, faces, primary_face, face_encoding_to_check
     gc.collect()
             
     if matched:
