@@ -1,8 +1,24 @@
+# ── Core API ────────────────────────────────────────────────────────────────
 fastapi
 uvicorn[standard]
 python-multipart
-opencv-python-headless
-requests
 python-dotenv
-Pillow
+
+# ── HTTP clients ──────────────────────────────────────────────────────────────
+requests
 httpx
+
+# ── Computer Vision ───────────────────────────────────────────────────────────
+# opencv-python-headless is mandatory for headless servers (Render, Docker).
+# Do NOT use opencv-python — it requires GUI libraries that crash on Render.
+opencv-python-headless
+numpy
+
+# ── Image handling ────────────────────────────────────────────────────────────
+Pillow
+
+# ── NOTE: If you need face_recognition (uses dlib), add these lines:
+# face-recognition
+# dlib
+# And change Render Build Command to:
+#   apt-get install -y cmake libopenblas-dev liblapack-dev && pip install -r requirements.txt

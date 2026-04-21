@@ -16,10 +16,16 @@ const socketHandler = require("./socket/socketHandler");
 const app = express();
 const server = http.createServer(app);
 
+// ── Allowed origins (production + local dev) ────────────────────────────────
+const allowedOrigins = [
+  process.env.CLIENT_URL,      // e.g. https://attend-ai.vercel.app
+  "http://localhost:5173",     // local Vite dev server
+].filter(Boolean);
+
 // ── Socket.io ────────────────────────────────────────────────────────────────
 const io = new Server(server, {
   cors: {
-    origin: process.env.CLIENT_URL || "http://localhost:5173",
+    origin: allowedOrigins,
     methods: ["GET", "POST"],
     credentials: true,
   },
@@ -29,7 +35,14 @@ socketHandler(io);
 // ── Middleware ───────────────────────────────────────────────────────────────
 app.use(
   cors({
-    origin: process.env.CLIENT_URL || "http://localhost:5173",
+    origin: (origin, callback) => {
+      // Allow server-to-server calls (no origin header) and whitelisted origins
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error(`CORS policy blocked request from: ${origin}`));
+      }
+    },
     credentials: true,
   })
 );
@@ -59,9 +72,24 @@ app.use((err, _, res, __) => {
 });
 
 // ── Start ────────────────────────────────────────────────────────────────────
+// Render injects PORT dynamically; fall back to 5000 for local dev only.
 const PORT = process.env.PORT || 5000;
 connectDB().then(() => {
-  server.listen(PORT, () => {
-    console.log(`🚀  Server running on http://localhost:${PORT}`);
+  server.listen(PORT, "0.0.0.0", () => {
+    const env = process.env.NODE_ENV || "development";
+    const url = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+    console.log(`🚀  Server running in [${env}] mode → ${url}`);
+
+    // Keep-alive self-ping (prevents Render free tier from sleeping)
+    if (process.env.NODE_ENV === "production" && process.env.RENDER_EXTERNAL_URL) {
+      setInterval(async () => {
+        try {
+          await fetch(`${process.env.RENDER_EXTERNAL_URL}/`);
+          console.log("💓 Keep-alive ping sent");
+        } catch (e) {
+          console.warn("Keep-alive ping failed:", e.message);
+        }
+      }, 14 * 60 * 1000); // every 14 minutes
+    }
   });
 });

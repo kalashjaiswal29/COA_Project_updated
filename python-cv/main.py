@@ -12,6 +12,8 @@ import logging
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -21,8 +23,6 @@ import liveness as lv
 import cv2
 import base64
 import numpy as np
-
-load_dotenv()
 
 logger = logging.getLogger("main")
 logging.basicConfig(level=logging.INFO)
@@ -36,8 +36,10 @@ NODE_SERVER_URL = os.getenv("NODE_SERVER_URL", "http://localhost:5000")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    logger.info(f"🔗 Connecting to Node.js backend at: {NODE_SERVER_URL}")
     face_engine.start(NODE_SERVER_URL)
     yield
+    logger.info("🛑 CV service shutting down.")
 
 
 app = FastAPI(
@@ -132,4 +134,22 @@ async def recognize(req: RecognizeRequest):
         live=True,
         liveness_reason=liveness_result["reason"],
         error=result.get("error"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Entrypoint — Render injects PORT via environment variable at runtime
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    import uvicorn
+
+    # Render sets PORT dynamically. We MUST bind to 0.0.0.0 (not 127.0.0.1)
+    # otherwise Render's load balancer cannot reach the service.
+    port = int(os.getenv("PORT", 8000))
+    logger.info(f"🚀 Starting CV service on 0.0.0.0:{port}")
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=port,
+        log_level="info",
     )
