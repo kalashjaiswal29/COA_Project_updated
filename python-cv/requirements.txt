@@ -1,24 +1,9 @@
-# ── Core API ────────────────────────────────────────────────────────────────
 fastapi
-uvicorn[standard]
+uvicorn
 python-multipart
-python-dotenv
-
-# ── HTTP clients ──────────────────────────────────────────────────────────────
 requests
-httpx
-
-# ── Computer Vision ───────────────────────────────────────────────────────────
-# opencv-python-headless is mandatory for headless servers (Render, Docker).
-# Do NOT use opencv-python — it requires GUI libraries that crash on Render.
 opencv-python-headless
 numpy
-
-# ── Image handling ────────────────────────────────────────────────────────────
-Pillow
-
-# ── Face Recognition and DB ──────────────────────────────────────────────────
-insightface
-onnxruntime
 pymongo
-
+mediapipe
+keras-facenet
