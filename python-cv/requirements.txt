@@ -1,10 +1,9 @@
+face_recognition
+dlib
+numpy
+opencv-python
 fastapi
 uvicorn
+pymongo
 python-multipart
 requests
-opencv-python-headless
-numpy
-pymongo
-mediapipe
-keras-facenet
-scipy

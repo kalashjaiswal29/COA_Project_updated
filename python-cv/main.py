@@ -6,35 +6,19 @@ import numpy as np
 import urllib.request
 import gc
 
-from contextlib import asynccontextmanager
-
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pymongo import MongoClient
 
-import mediapipe as mp
-# Disable tensorflow logs
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-from keras_facenet import FaceNet
+import face_recognition
 import liveness as lv
 
 logger = logging.getLogger("main")
 logging.basicConfig(level=logging.INFO)
 
-# 1. Initialize Models
-logger.info("Initializing FaceNet and MediaPipe...")
-embedder = FaceNet()
-mp_face_detection = mp.solutions.face_detection
-face_detector = mp_face_detection.FaceDetection(model_selection=0, min_detection_confidence=0.5)
-
-# 2. Database Connection with Hardcoded Fallback
-MONGO_URI = os.getenv("MONGO_URI")
-if not MONGO_URI:
-    logger.warning("MONGO_URI missing! Using hardcoded Atlas fallback.")
-    # Add a fallback to your Atlas string if it fails (using a placeholder string here)
-    MONGO_URI = "mongodb+srv://admin:password@cluster.mongodb.net/attendance_db" 
-
+# 1. Database Connection
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/attendance_db")
 client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
 try:
     db = client.get_default_database()
@@ -48,30 +32,14 @@ known_face_ids = []
 frame_counter = 0
 
 def get_face_embedding(image_bgr):
-    """Crops face using MediaPipe and gets embedding using FaceNet."""
-    # Resize frames to 0.5x to save RAM
-    small_image = cv2.resize(image_bgr, (0, 0), fx=0.5, fy=0.5)
-    rgb_image = cv2.cvtColor(small_image, cv2.COLOR_BGR2RGB)
-    
-    results = face_detector.process(rgb_image)
-    if not results.detections:
+    """Gets face embedding using dlib-based face_recognition."""
+    rgb_image = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+    face_locations = face_recognition.face_locations(rgb_image)
+    if not face_locations:
         return None
-        
-    detection = results.detections[0]
-    bboxC = detection.location_data.relative_bounding_box
-    ih, iw, _ = rgb_image.shape
-    x, y, w, h = int(bboxC.xmin * iw), int(bboxC.ymin * ih), int(bboxC.width * iw), int(bboxC.height * ih)
-    
-    # Pad crop slightly
-    x, y = max(0, x), max(0, y)
-    face_crop = rgb_image[y:y+h, x:x+w]
-    
-    if face_crop.size == 0:
-        return None
-        
-    embeddings = embedder.embeddings([face_crop])
-    if len(embeddings) > 0:
-        return embeddings[0]
+    face_encodings = face_recognition.face_encodings(rgb_image, face_locations)
+    if len(face_encodings) > 0:
+        return face_encodings[0]
     return None
 
 def load_faces():
@@ -102,6 +70,9 @@ def load_faces():
                 if image is None:
                     continue
                     
+                # Downscale to speed up local processing
+                image = cv2.resize(image, (0, 0), fx=0.5, fy=0.5)
+                
                 embedding = get_face_embedding(image)
                 if embedding is not None:
                     known_face_encodings.append(embedding)
@@ -111,13 +82,6 @@ def load_faces():
                 logger.error(f"Failed to load image for {student_name}: {e}")
     except Exception as e:
         logger.error(f"MongoDB Fetch Failed: {e}")
-        
-    # Self-Healing: Mock Student if empty
-    if len(known_face_encodings) == 0:
-        logger.warning("No students loaded. Injecting Mock Student for demo!")
-        known_face_encodings.append(np.zeros(512)) # dummy 512-d array for FaceNet
-        known_face_names.append("Mock Student (Kalash Jaiswal)")
-        known_face_ids.append("mock-id-123")
         
     gc.collect()
     logger.info(f"Loaded {len(known_face_encodings)} student faces successfully.")
@@ -161,13 +125,16 @@ async def recognize(req: RecognizeRequest):
         raise HTTPException(status_code=400, detail="Invalid image")
 
     liveness_result = lv.is_live(img_bgr)
-    # HACK: Liveness Bypass
-    liveness_result["live"] = True
+    if not liveness_result["live"]:
+        return RecognizeResponse(
+            matched=False, live=False, liveness_reason=liveness_result["reason"], error="Liveness failed"
+        )
 
-    face_encoding = get_face_embedding(img_bgr)
+    # Downscale for faster face recognition locally
+    small_frame = cv2.resize(img_bgr, (0, 0), fx=0.5, fy=0.5)
+    face_encoding = get_face_embedding(small_frame)
     
     if face_encoding is None:
-        # No face detected in frame.
         return RecognizeResponse(matched=False, live=True, error="No face detected")
         
     matched = False
@@ -175,17 +142,16 @@ async def recognize(req: RecognizeRequest):
     confidence = 0.0
     
     if len(known_face_encodings) > 0:
-        known_encodings_array = np.array(known_face_encodings)
-        face_distances = np.linalg.norm(known_encodings_array - face_encoding, axis=1)
+        face_distances = face_recognition.face_distance(known_face_encodings, face_encoding)
         best_match_index = np.argmin(face_distances)
         best_distance = face_distances[best_match_index]
         
         logger.info(f"🔍 Best match distance: {best_distance:.4f} for {known_face_names[best_match_index]}")
         
-        # DEMO HACK: Lenient matching threshold (Distance < 0.9)
-        if best_distance < 0.9 or known_face_ids[best_match_index] == "mock-id-123":
+        # dlib face_distance sweet spot is typically < 0.6
+        if best_distance <= 0.6:
             matched = True
-            confidence = 0.99 if known_face_ids[best_match_index] == "mock-id-123" else max(0.0, 1.0 - (best_distance / 2.0))
+            confidence = max(0.0, 1.0 - best_distance)
             
     if matched:
         return RecognizeResponse(
@@ -206,4 +172,4 @@ async def recognize(req: RecognizeRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=10000, log_level="info")
+    uvicorn.run("main:app", host="127.0.0.1", port=5000, log_level="info")
